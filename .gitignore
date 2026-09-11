@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+coverage/
+
+# env
+.env
+.env.*.local
+
+# logs
+npm-debug.log*
+*.log
+
+# prisma
+prisma/*.db
+
+# misc
+.DS_Store
