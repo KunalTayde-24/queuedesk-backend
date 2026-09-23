@@ -32,17 +32,3 @@ CREATE UNIQUE INDEX "tokens_date_tokenNumber_key" ON "tokens"("date", "tokenNumb
 
 -- CreateIndex
 CREATE UNIQUE INDEX "admins_email_key" ON "admins"("email");
-
--- Supabase Realtime + RLS setup for the public "display" screen and admin
--- dashboard, which read this table directly from the browser using the
--- Supabase anon key. Only SELECT is allowed for anon; all writes go through
--- the NestJS API using the privileged database connection.
-ALTER TABLE "tokens" ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Allow anon read access to tokens"
-  ON "tokens"
-  FOR SELECT
-  TO anon
-  USING (true);
-
-ALTER PUBLICATION supabase_realtime ADD TABLE "tokens";
