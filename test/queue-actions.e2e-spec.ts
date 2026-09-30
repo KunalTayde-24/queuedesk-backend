@@ -66,7 +66,9 @@ describe('QueueActionsService (e2e-style, mocked Prisma)', () => {
     expect(result.success).toBe(true);
     expect(result.token.status).toBe(TokenStatus.CALLED);
     expect(result.warning).toBeUndefined();
-    expect(stub.sent).toEqual([{ mobile: '9876543210', tokenNumber: 1 }]);
+    expect(stub.sent).toEqual([
+      { mobile: '9876543210', tokenNumber: 1, name: 'Test User' },
+    ]);
   });
 
   it('un-calls any other currently CALLED token for the same day', async () => {

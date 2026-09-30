@@ -11,12 +11,18 @@ import { WhatsAppSendError, WhatsAppSender } from './whatsapp-sender.interface';
 // of the recipient's last inbound message (e.g. their sandbox join message).
 const VALID_TEMPLATE_SID = /^HX[0-9a-f]{32}$/i;
 
+// Freeform message text, overridable via WHATSAPP_MESSAGE. Supports the
+// {name} and {token} placeholders.
+const DEFAULT_MESSAGE =
+  'Hi {name}, your token number {token} has been called. Please proceed to the counter.';
+
 @Injectable()
 export class TwilioWhatsAppSender implements WhatsAppSender {
   private readonly client: Twilio;
   private readonly fromNumber: string;
   private readonly templateSid: string;
   private readonly countryCode: string;
+  private readonly messageText: string;
 
   constructor(private readonly config: ConfigService) {
     this.client = new Twilio(
@@ -26,11 +32,14 @@ export class TwilioWhatsAppSender implements WhatsAppSender {
     this.fromNumber = this.config.get<string>('TWILIO_WHATSAPP_NUMBER') ?? '';
     this.templateSid = this.config.get<string>('TWILIO_TEMPLATE_SID') ?? '';
     this.countryCode = this.config.get<string>('DEFAULT_COUNTRY_CODE') ?? '';
+    this.messageText =
+      this.config.get<string>('WHATSAPP_MESSAGE') || DEFAULT_MESSAGE;
   }
 
   async sendTokenCalledMessage(
     mobile: string,
     tokenNumber: number,
+    name: string,
   ): Promise<void> {
     const toNumber = `whatsapp:${this.countryCode}${mobile}`;
 
@@ -46,7 +55,9 @@ export class TwilioWhatsAppSender implements WhatsAppSender {
         await this.client.messages.create({
           from: `whatsapp:${this.fromNumber}`,
           to: toNumber,
-          body: `Your token number ${tokenNumber} has been called. Please proceed to the counter.`,
+          body: this.messageText
+            .replace(/\{name\}/g, name)
+            .replace(/\{token\}/g, String(tokenNumber)),
         });
       }
     } catch (err) {

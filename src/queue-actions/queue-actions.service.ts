@@ -35,6 +35,7 @@ export class QueueActionsService {
       await this.whatsapp.sendTokenCalledMessage(
         token.mobile,
         token.tokenNumber,
+        token.name,
       );
       return undefined;
     } catch (err) {

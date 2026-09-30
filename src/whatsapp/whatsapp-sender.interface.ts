@@ -1,5 +1,9 @@
 export interface WhatsAppSender {
-  sendTokenCalledMessage(mobile: string, tokenNumber: number): Promise<void>;
+  sendTokenCalledMessage(
+    mobile: string,
+    tokenNumber: number,
+    name: string,
+  ): Promise<void>;
 }
 
 export class WhatsAppSendError extends Error {

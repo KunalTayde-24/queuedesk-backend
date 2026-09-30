@@ -4,6 +4,7 @@ import { WhatsAppSender } from './whatsapp-sender.interface';
 interface SentMessage {
   mobile: string;
   tokenNumber: number;
+  name: string;
 }
 
 /**
@@ -17,7 +18,8 @@ export class StubWhatsAppSender implements WhatsAppSender {
   async sendTokenCalledMessage(
     mobile: string,
     tokenNumber: number,
+    name: string,
   ): Promise<void> {
-    this.sent.push({ mobile, tokenNumber });
+    this.sent.push({ mobile, tokenNumber, name });
   }
 }
