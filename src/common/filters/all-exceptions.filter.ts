@@ -13,11 +13,29 @@ interface CleanErrorBody {
   error: string;
 }
 
+function isFileTooLarge(exception: unknown): boolean {
+  return (
+    typeof exception === 'object' &&
+    exception !== null &&
+    'code' in exception &&
+    (exception as { code?: string }).code === 'LIMIT_FILE_SIZE'
+  );
+}
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
+
+    if (isFileTooLarge(exception)) {
+      response.status(HttpStatus.BAD_REQUEST).json({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Image must be 2 MB or smaller',
+        error: 'Bad Request',
+      });
+      return;
+    }
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus();

@@ -5,6 +5,7 @@ import { TokensModule } from './tokens/tokens.module';
 import { QueueActionsModule } from './queue-actions/queue-actions.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { AuthModule } from './auth/auth.module';
+import { EventsModule } from './events/events.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AuthModule } from './auth/auth.module';
     AuthModule,
     TokensModule,
     QueueActionsModule,
+    EventsModule,
   ],
 })
 export class AppModule {}

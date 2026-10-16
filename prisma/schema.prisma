@@ -31,11 +31,66 @@ model Token {
   @@map("tokens")
 }
 
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+}
+
+enum RegistrationStatus {
+  REGISTERED
+  CANCELLED
+}
+
 model Admin {
   id           String   @id @default(uuid())
   email        String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
+  events       Event[]
 
   @@map("admins")
+}
+
+model Event {
+  id                   String              @id @default(uuid())
+  title                String
+  description          String
+  venue                String
+  imageData            Bytes?
+  imageMime            String?
+  imageName            String?
+  registrationOpensAt  DateTime
+  registrationClosesAt DateTime
+  startsAt             DateTime
+  endsAt               DateTime
+  status               EventStatus         @default(DRAFT)
+  createdByAdminId     String?
+  createdBy            Admin?              @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  registrations        EventRegistration[]
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  @@index([status, startsAt])
+  @@index([status, registrationClosesAt])
+  @@index([createdByAdminId])
+  @@map("events")
+}
+
+model EventRegistration {
+  id              String             @id @default(uuid())
+  eventId         String
+  event           Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name            String
+  mobile          String
+  email           String
+  status          RegistrationStatus @default(REGISTERED)
+  confirmationRef String             @unique
+  registeredAt    DateTime           @default(now())
+  cancelledAt     DateTime?
+
+  @@unique([eventId, mobile])
+  @@index([eventId, status])
+  @@index([email])
+  @@map("event_registrations")
 }

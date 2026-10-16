@@ -22,6 +22,32 @@ async function main() {
   });
 
   console.log(`Admin ready: ${admin.email}`);
+
+  const sampleTitle = 'Diwali Celebration';
+  const existingEvent = await prisma.event.findFirst({
+    where: { title: sampleTitle },
+  });
+  if (!existingEvent) {
+    const opensAt = new Date();
+    const startsAt = new Date(opensAt.getTime() + 10 * 24 * 60 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 4 * 60 * 60 * 1000);
+
+    await prisma.event.create({
+      data: {
+        title: sampleTitle,
+        description:
+          'Join us for an evening of lights, music, and sweets. Bring your family, wear something festive, and register before the celebration begins.',
+        venue: 'Main Hall',
+        registrationOpensAt: opensAt,
+        registrationClosesAt: startsAt,
+        startsAt,
+        endsAt,
+        status: 'PUBLISHED',
+        createdByAdminId: admin.id,
+      },
+    });
+    console.log(`Sample event ready: ${sampleTitle}`);
+  }
 }
 
 main()
