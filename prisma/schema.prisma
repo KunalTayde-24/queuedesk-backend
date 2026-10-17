@@ -31,6 +31,31 @@ model Token {
   @@map("tokens")
 }
 
+// Dates the admin has opened for visitors to take tokens. A date with no row
+// here is closed: visitors cannot pick it.
+model QueueDay {
+  date      DateTime @id @db.Date
+  createdAt DateTime @default(now())
+
+  @@map("queue_days")
+}
+
+// One row per "send me a code" request. A row is verified once, then consumed
+// by exactly one token, so a verified phone number cannot be reused.
+model OtpChallenge {
+  id         String    @id @default(uuid())
+  mobile     String
+  codeHash   String?
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  verifiedAt DateTime?
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([mobile, createdAt])
+  @@map("otp_challenges")
+}
+
 enum EventStatus {
   DRAFT
   PUBLISHED
