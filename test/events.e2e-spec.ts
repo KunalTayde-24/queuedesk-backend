@@ -37,14 +37,18 @@ function eventRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// Dates are relative to "now": new events cannot be scheduled in the past.
+const inDays = (days: number, hours = 0) =>
+  new Date(Date.now() + (days * 24 + hours) * 3_600_000).toISOString();
+
 const validDto = {
   title: 'Diwali Celebration',
   description: 'Lights, music, and sweets for the whole neighbourhood.',
   venue: 'Main Hall',
-  registrationOpensAt: '2026-10-01T05:30:00.000Z',
-  registrationClosesAt: '2026-10-10T17:30:00.000Z',
-  startsAt: '2026-10-10T17:30:00.000Z',
-  endsAt: '2026-10-10T21:30:00.000Z',
+  registrationOpensAt: inDays(1),
+  registrationClosesAt: inDays(5),
+  startsAt: inDays(6),
+  endsAt: inDays(6, 4),
 };
 
 describe('EventsService', () => {
@@ -130,8 +134,8 @@ describe('EventsService', () => {
     await expect(
       service.create('admin-1', {
         ...validDto,
-        registrationClosesAt: '2026-10-11T00:00:00.000Z',
-        startsAt: '2026-10-10T17:30:00.000Z',
+        registrationClosesAt: inDays(7),
+        startsAt: inDays(6),
       }),
     ).rejects.toThrow('Registration must close at or before the event starts');
   });
@@ -143,6 +147,46 @@ describe('EventsService', () => {
         endsAt: '2026-10-10T12:00:00.000Z',
       }),
     ).rejects.toThrow('Event end must be after the event starts');
+  });
+
+  it('rejects an event scheduled in the past', async () => {
+    await expect(
+      service.create('admin-1', {
+        ...validDto,
+        registrationOpensAt: inDays(-10),
+        registrationClosesAt: inDays(-5),
+        startsAt: inDays(-4),
+        endsAt: inDays(-4, 4),
+      }),
+    ).rejects.toThrow('Registration cannot close in the past');
+    expect(prismaMock.event.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an impossible calendar date instead of rolling it into the next month', async () => {
+    await expect(
+      service.create('admin-1', { ...validDto, startsAt: '2027-02-31T10:00' }),
+    ).rejects.toThrow('Event start is not a valid date');
+  });
+
+  it('rejects a date that is more than 3 years away (a typo in the year)', async () => {
+    await expect(
+      service.create('admin-1', { ...validDto, endsAt: '2099-01-01T00:00:00.000Z' }),
+    ).rejects.toThrow('more than 3 years away');
+  });
+
+  it('lets an admin edit an old event without touching its dates', async () => {
+    prismaMock.event.findUnique.mockResolvedValueOnce(eventRow());
+    prismaMock.event.update.mockResolvedValueOnce(eventRow({ title: 'New title' }));
+    await expect(
+      service.update('11111111-1111-4111-8111-111111111111', { title: 'New title' }),
+    ).resolves.toBeDefined();
+  });
+
+  it('does not let an edit move a date into the past', async () => {
+    prismaMock.event.findUnique.mockResolvedValueOnce(eventRow());
+    await expect(
+      service.update('11111111-1111-4111-8111-111111111111', { endsAt: inDays(-1) }),
+    ).rejects.toThrow('The event cannot end in the past');
   });
 
   it('publishes a draft and refuses to publish a cancelled event', async () => {

@@ -21,7 +21,12 @@ import {
   eventSelect,
   toEventDto,
 } from './events.mapper';
-import { parseWindows } from './events.windows';
+import {
+  ALL_WINDOW_FIELDS,
+  EventWindows,
+  assertDatesSensible,
+  parseWindows,
+} from './events.windows';
 
 const REF_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_REF_ATTEMPTS = 5;
@@ -89,6 +94,7 @@ export class EventsService {
     file?: UploadedImage,
   ): Promise<EventDto> {
     const windows = parseWindows(dto);
+    assertDatesSensible(windows, ALL_WINDOW_FIELDS);
     const image = file ? await processEventImage(file) : null;
     const event = await this.prisma.event.create({
       data: {
@@ -118,6 +124,12 @@ export class EventsService {
       startsAt: dto.startsAt ?? current.startsAt.toISOString(),
       endsAt: dto.endsAt ?? current.endsAt.toISOString(),
     });
+    // Only dates this edit actually changed are checked against today.
+    const changed = ALL_WINDOW_FIELDS.filter(
+      (field: keyof EventWindows) =>
+        windows[field].getTime() !== current[field].getTime(),
+    );
+    assertDatesSensible(windows, changed);
 
     const data: Prisma.EventUpdateInput = {
       title: dto.title,
