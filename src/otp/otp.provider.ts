@@ -4,7 +4,7 @@
  * every provider; a provider only knows how to deliver and verify a code.
  */
 export interface OtpProvider {
-  /** Starts a verification for `to` (E.164 number such as +919876543210). */
+  /** Starts a verification for `to` (E.164 number such as +6591234567). */
   start(
     to: string,
     mobile: string,

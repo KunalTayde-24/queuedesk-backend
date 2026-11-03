@@ -1,14 +1,13 @@
-import { randomBytes } from 'crypto';
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { EventStatus, Prisma, RegistrationStatus } from '@prisma/client';
+import { todayKey } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
+import { QueueDaysService } from '../tokens/queue-days.service';
 import { CreateEventDto } from './dto/create-event.dto';
-import { CreateRegistrationDto } from './dto/create-registration.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import {
   ProcessedImage,
@@ -27,18 +26,7 @@ import {
   assertDatesSensible,
   parseWindows,
 } from './events.windows';
-
-const REF_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const MAX_REF_ATTEMPTS = 5;
-
-export interface RegistrationDto {
-  id: string;
-  confirmationRef: string;
-  eventId: string;
-  name: string;
-  email: string;
-  registeredAt: string;
-}
+import { eventDayKeys } from './events.days';
 
 export interface RegistrantDto {
   id: string;
@@ -57,35 +45,38 @@ export interface StoredImage {
 
 @Injectable()
 export class EventsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly queueDays: QueueDaysService,
+  ) {}
 
-  async listPublic(now = new Date()): Promise<EventDto[]> {
+  async listPublic(): Promise<EventDto[]> {
     const events = await this.prisma.event.findMany({
       where: { status: EventStatus.PUBLISHED },
       select: eventSelect,
       orderBy: { startsAt: 'asc' },
     });
-    return events.map((event) => toEventDto(event, now));
+    return events.map((event) => toEventDto(event));
   }
 
-  async listAdmin(now = new Date()): Promise<EventDto[]> {
+  async listAdmin(): Promise<EventDto[]> {
     const events = await this.prisma.event.findMany({
       select: eventSelect,
       orderBy: { updatedAt: 'desc' },
     });
-    return events.map((event) => toEventDto(event, now));
+    return events.map((event) => toEventDto(event));
   }
 
-  async findPublic(id: string, now = new Date()): Promise<EventDto> {
+  async findPublic(id: string): Promise<EventDto> {
     const event = await this.findRecord(id);
     if (event.status !== EventStatus.PUBLISHED) {
       throw new NotFoundException('Event not found');
     }
-    return toEventDto(event, now);
+    return toEventDto(event);
   }
 
-  async findAdmin(id: string, now = new Date()): Promise<EventDto> {
-    return toEventDto(await this.findRecord(id), now);
+  async findAdmin(id: string): Promise<EventDto> {
+    return toEventDto(await this.findRecord(id));
   }
 
   async create(
@@ -95,13 +86,17 @@ export class EventsService {
   ): Promise<EventDto> {
     const windows = parseWindows(dto);
     assertDatesSensible(windows, ALL_WINDOW_FIELDS);
+    const now = new Date();
     const image = file ? await processEventImage(file) : null;
     const event = await this.prisma.event.create({
       data: {
         title: dto.title,
-        description: dto.description,
-        venue: dto.venue,
+        description: dto.description ?? '',
+        venue: dto.venue ?? '',
         ...windows,
+        // Registration is no longer offered; these columns are kept (not null) with harmless values.
+        registrationOpensAt: now,
+        registrationClosesAt: windows.startsAt,
         createdByAdminId: adminId,
         ...imageData(image),
       },
@@ -117,10 +112,6 @@ export class EventsService {
   ): Promise<EventDto> {
     const current = await this.findRecord(id);
     const windows = parseWindows({
-      registrationOpensAt:
-        dto.registrationOpensAt ?? current.registrationOpensAt.toISOString(),
-      registrationClosesAt:
-        dto.registrationClosesAt ?? current.registrationClosesAt.toISOString(),
       startsAt: dto.startsAt ?? current.startsAt.toISOString(),
       endsAt: dto.endsAt ?? current.endsAt.toISOString(),
     });
@@ -136,6 +127,7 @@ export class EventsService {
       description: dto.description,
       venue: dto.venue,
       ...windows,
+      registrationClosesAt: windows.startsAt,
     };
 
     if (file) {
@@ -151,6 +143,11 @@ export class EventsService {
       data,
       select: eventSelect,
     });
+    // A published event keeps its queue days in step with its dates.
+    if (event.status === EventStatus.PUBLISHED) {
+      await this.openDays(event);
+      await this.releaseDays(current, event);
+    }
     return toEventDto(event);
   }
 
@@ -160,8 +157,6 @@ export class EventsService {
       throw new BadRequestException('Cancelled events cannot be published');
     }
     parseWindows({
-      registrationOpensAt: current.registrationOpensAt.toISOString(),
-      registrationClosesAt: current.registrationClosesAt.toISOString(),
       startsAt: current.startsAt.toISOString(),
       endsAt: current.endsAt.toISOString(),
     });
@@ -170,6 +165,8 @@ export class EventsService {
       data: { status: EventStatus.PUBLISHED },
       select: eventSelect,
     });
+    // Publishing opens the event's dates in the queue so visitors can pick them.
+    await this.openDays(event);
     return toEventDto(event);
   }
 
@@ -183,16 +180,18 @@ export class EventsService {
       data: { status: EventStatus.DRAFT },
       select: eventSelect,
     });
+    await this.releaseDays(current);
     return toEventDto(event);
   }
 
   async cancel(id: string): Promise<EventDto> {
-    await this.findRecord(id);
+    const current = await this.findRecord(id);
     const event = await this.prisma.event.update({
       where: { id },
       data: { status: EventStatus.CANCELLED },
       select: eventSelect,
     });
+    await this.releaseDays(current);
     return toEventDto(event);
   }
 
@@ -200,77 +199,12 @@ export class EventsService {
     const current = await this.findRecord(id);
     if (current._count.registrations > 0) {
       throw new BadRequestException(
-        'This event already has registrations. Cancel it instead so those records stay available.',
+        'This event already has registrations, so it cannot be deleted. Unpublish it instead so those records stay available.',
       );
     }
     await this.prisma.event.delete({ where: { id } });
+    await this.releaseDays(current);
     return { success: true };
-  }
-
-  async register(
-    eventId: string,
-    dto: CreateRegistrationDto,
-    now = new Date(),
-  ): Promise<RegistrationDto> {
-    const event = await this.prisma.event.findUnique({
-      where: { id: eventId },
-      select: eventSelect,
-    });
-    if (!event || event.status !== EventStatus.PUBLISHED) {
-      throw new NotFoundException('Event not found');
-    }
-
-    const view = toEventDto(event, now);
-    if (!view.canRegister) {
-      if (view.registrationState === 'OPENS_SOON') {
-        throw new BadRequestException('Registration has not opened yet');
-      }
-      throw new BadRequestException('Registration is closed for this event');
-    }
-
-    for (let attempt = 0; attempt < MAX_REF_ATTEMPTS; attempt++) {
-      try {
-        const created = await this.prisma.eventRegistration.create({
-          data: {
-            eventId,
-            name: dto.name,
-            mobile: dto.mobile,
-            email: dto.email,
-            confirmationRef: makeConfirmationRef(),
-          },
-        });
-        return {
-          id: created.id,
-          confirmationRef: created.confirmationRef,
-          eventId: created.eventId,
-          name: created.name,
-          email: created.email,
-          registeredAt: created.registeredAt.toISOString(),
-        };
-      } catch (err) {
-        if (
-          !(err instanceof Prisma.PrismaClientKnownRequestError) ||
-          err.code !== 'P2002'
-        ) {
-          throw err;
-        }
-        const target = constraintName(err);
-        if (target.includes('mobile') || target.includes('eventId')) {
-          throw new ConflictException(
-            'This mobile number is already registered for this event',
-          );
-        }
-        if (attempt === MAX_REF_ATTEMPTS - 1) {
-          throw new ConflictException(
-            'Could not finish registration. Please try again.',
-          );
-        }
-      }
-    }
-
-    throw new ConflictException(
-      'Could not finish registration. Please try again.',
-    );
   }
 
   async listRegistrations(eventId: string): Promise<RegistrantDto[]> {
@@ -304,6 +238,36 @@ export class EventsService {
       throw new NotFoundException('Image not found');
     }
     return { data: image.data, mime: image.mime };
+  }
+
+  /** Opens every upcoming queue day the event covers. */
+  private async openDays(event: { startsAt: Date; endsAt: Date }) {
+    for (const key of eventDayKeys(event, todayKey())) {
+      await this.queueDays.open(key);
+    }
+  }
+
+  /**
+   * Closes the event's upcoming queue days that no other published event still
+   * needs. The event's own days after an edit (`after`) stay open. Tokens
+   * already issued are never touched (closing only stops new ones).
+   */
+  private async releaseDays(
+    before: { id: string; startsAt: Date; endsAt: Date },
+    after?: { startsAt: Date; endsAt: Date },
+  ) {
+    const today = todayKey();
+    const keep = new Set(after ? eventDayKeys(after, today) : []);
+    const others = await this.prisma.event.findMany({
+      where: { status: EventStatus.PUBLISHED, id: { not: before.id } },
+      select: { startsAt: true, endsAt: true },
+    });
+    for (const other of others) {
+      for (const key of eventDayKeys(other, today)) keep.add(key);
+    }
+    for (const key of eventDayKeys(before, today)) {
+      if (!keep.has(key)) await this.queueDays.close(key);
+    }
   }
 
   private async findRecord(id: string): Promise<EventRecord> {
@@ -344,21 +308,4 @@ function imageData(
     imageMime: image.mime,
     imageName: image.name,
   };
-}
-
-function makeConfirmationRef(): string {
-  const bytes = randomBytes(6);
-  let code = '';
-  for (const byte of bytes) {
-    code += REF_ALPHABET[byte % REF_ALPHABET.length];
-  }
-  return `QD-${code}`;
-}
-
-function constraintName(err: Prisma.PrismaClientKnownRequestError): string {
-  const target = err.meta?.target;
-  if (Array.isArray(target)) {
-    return target.join(',');
-  }
-  return typeof target === 'string' ? target : '';
 }

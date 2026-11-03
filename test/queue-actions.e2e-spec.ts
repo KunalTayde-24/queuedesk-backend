@@ -21,7 +21,7 @@ describe('QueueActionsService (e2e-style, mocked Prisma)', () => {
     date: new Date('2026-01-01'),
     tokenNumber: 1,
     name: 'Test User',
-    mobile: '9876543210',
+    mobile: '+6591234567',
     status: TokenStatus.WAITING,
     createdAt: new Date(),
   };
@@ -67,7 +67,7 @@ describe('QueueActionsService (e2e-style, mocked Prisma)', () => {
     expect(result.token.status).toBe(TokenStatus.CALLED);
     expect(result.warning).toBeUndefined();
     expect(stub.sent).toEqual([
-      { mobile: '9876543210', tokenNumber: 1, name: 'Test User' },
+      { mobile: '+6591234567', tokenNumber: 1, name: 'Test User' },
     ]);
   });
 

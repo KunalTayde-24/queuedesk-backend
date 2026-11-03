@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Twilio } from 'twilio';
 import { WhatsAppSendError, WhatsAppSender } from './whatsapp-sender.interface';
+import { toE164 } from '../common/mobile';
 
 // A real Content Template SID always looks like HX followed by 32 hex chars.
 // Anything else (empty, or the placeholder from .env.example) is treated as
@@ -31,7 +32,7 @@ export class TwilioWhatsAppSender implements WhatsAppSender {
     );
     this.fromNumber = this.config.get<string>('TWILIO_WHATSAPP_NUMBER') ?? '';
     this.templateSid = this.config.get<string>('TWILIO_TEMPLATE_SID') ?? '';
-    this.countryCode = this.config.get<string>('DEFAULT_COUNTRY_CODE') ?? '';
+    this.countryCode = this.config.get<string>('DEFAULT_COUNTRY_CODE') ?? '+65';
     this.messageText =
       this.config.get<string>('WHATSAPP_MESSAGE') || DEFAULT_MESSAGE;
   }
@@ -41,7 +42,7 @@ export class TwilioWhatsAppSender implements WhatsAppSender {
     tokenNumber: number,
     name: string,
   ): Promise<void> {
-    const toNumber = `whatsapp:${this.countryCode}${mobile}`;
+    const toNumber = `whatsapp:${toE164(mobile, this.countryCode)}`;
 
     try {
       if (VALID_TEMPLATE_SID.test(this.templateSid)) {

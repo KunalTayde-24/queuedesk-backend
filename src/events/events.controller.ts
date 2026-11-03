@@ -1,18 +1,13 @@
 import {
-  Body,
   Controller,
   Get,
   Header,
-  HttpCode,
-  HttpStatus,
   Param,
   ParseUUIDPipe,
-  Post,
   Res,
   StreamableFile,
 } from '@nestjs/common';
 import { Response } from 'express';
-import { CreateRegistrationDto } from './dto/create-registration.dto';
 import { EventsService } from './events.service';
 
 @Controller('events')
@@ -38,14 +33,5 @@ export class EventsController {
   @Get(':id')
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.eventsService.findPublic(id);
-  }
-
-  @Post(':id/registrations')
-  @HttpCode(HttpStatus.CREATED)
-  register(
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: CreateRegistrationDto,
-  ) {
-    return this.eventsService.register(id, dto);
   }
 }

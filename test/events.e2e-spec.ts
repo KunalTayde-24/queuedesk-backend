@@ -1,17 +1,16 @@
-import {
-  BadRequestException,
-  ConflictException,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
-import { EventStatus, Prisma, RegistrationStatus } from '@prisma/client';
+import { EventStatus, RegistrationStatus } from '@prisma/client';
 import { AdminGuard } from '../src/auth/admin.guard';
 import { EventsAdminController } from '../src/events/events-admin.controller';
 import { processEventImage } from '../src/events/events.image';
 import { EventsController } from '../src/events/events.controller';
+import { eventDayKeys } from '../src/events/events.days';
 import { EventsService } from '../src/events/events.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { QueueDaysService } from '../src/tokens/queue-days.service';
+import { todayKey } from '../src/common/dates';
 
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -25,8 +24,6 @@ function eventRow(overrides: Record<string, unknown> = {}) {
     description: 'Lights, music, and sweets for the whole neighbourhood.',
     venue: 'Main Hall',
     imageMime: null,
-    registrationOpensAt: new Date('2026-10-01T00:00:00.000Z'),
-    registrationClosesAt: new Date('2026-10-10T12:00:00.000Z'),
     startsAt: new Date('2026-10-10T12:00:00.000Z'),
     endsAt: new Date('2026-10-10T16:00:00.000Z'),
     status: EventStatus.PUBLISHED,
@@ -45,14 +42,14 @@ const validDto = {
   title: 'Diwali Celebration',
   description: 'Lights, music, and sweets for the whole neighbourhood.',
   venue: 'Main Hall',
-  registrationOpensAt: inDays(1),
-  registrationClosesAt: inDays(5),
   startsAt: inDays(6),
   endsAt: inDays(6, 4),
 };
 
 describe('EventsService', () => {
   let service: EventsService;
+
+  const queueDaysMock = { open: jest.fn(), close: jest.fn() };
 
   const prismaMock: any = {
     event: {
@@ -74,6 +71,7 @@ describe('EventsService', () => {
       providers: [
         EventsService,
         { provide: PrismaService, useValue: prismaMock },
+        { provide: QueueDaysService, useValue: queueDaysMock },
       ],
     }).compile();
     service = moduleRef.get(EventsService);
@@ -82,16 +80,14 @@ describe('EventsService', () => {
   it('asks the database only for published events on the public list', async () => {
     prismaMock.event.findMany.mockResolvedValue([eventRow()]);
 
-    const result = await service.listPublic(
-      new Date('2026-10-05T00:00:00.000Z'),
-    );
+    const result = await service.listPublic();
 
     expect(prismaMock.event.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { status: EventStatus.PUBLISHED } }),
     );
-    expect(result[0].registrationState).toBe('OPEN');
-    expect(result[0].canRegister).toBe(true);
     expect(result[0]).not.toHaveProperty('imageData');
+    expect(result[0]).not.toHaveProperty('registrationState');
+    expect(result[0]).not.toHaveProperty('canRegister');
   });
 
   it('keeps drafts off the public detail route', async () => {
@@ -109,35 +105,12 @@ describe('EventsService', () => {
       eventRow({ status: EventStatus.DRAFT }),
     ]);
 
-    const result = await service.listAdmin(
-      new Date('2026-10-05T00:00:00.000Z'),
-    );
+    const result = await service.listAdmin();
 
     expect(prismaMock.event.findMany).toHaveBeenCalledWith(
       expect.not.objectContaining({ where: { status: EventStatus.PUBLISHED } }),
     );
     expect(result[0].status).toBe(EventStatus.DRAFT);
-    expect(result[0].canRegister).toBe(false);
-  });
-
-  it('rejects a registration window that closes before it opens', async () => {
-    await expect(
-      service.create('admin-1', {
-        ...validDto,
-        registrationClosesAt: '2026-09-01T00:00:00.000Z',
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(prismaMock.event.create).not.toHaveBeenCalled();
-  });
-
-  it('rejects registration that stays open after the event starts', async () => {
-    await expect(
-      service.create('admin-1', {
-        ...validDto,
-        registrationClosesAt: inDays(7),
-        startsAt: inDays(6),
-      }),
-    ).rejects.toThrow('Registration must close at or before the event starts');
   });
 
   it('rejects an event that ends before it starts', async () => {
@@ -153,12 +126,10 @@ describe('EventsService', () => {
     await expect(
       service.create('admin-1', {
         ...validDto,
-        registrationOpensAt: inDays(-10),
-        registrationClosesAt: inDays(-5),
         startsAt: inDays(-4),
         endsAt: inDays(-4, 4),
       }),
-    ).rejects.toThrow('Registration cannot close in the past');
+    ).rejects.toThrow('The event cannot start in the past');
     expect(prismaMock.event.create).not.toHaveBeenCalled();
   });
 
@@ -210,77 +181,67 @@ describe('EventsService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('registers a guest while the window is open', async () => {
-    prismaMock.event.findUnique.mockResolvedValue(eventRow());
-    prismaMock.eventRegistration.create.mockResolvedValue({
-      id: 'reg-1',
-      confirmationRef: 'QD-TEST12',
-      eventId: '11111111-1111-4111-8111-111111111111',
-      name: 'Asha Patil',
-      email: 'asha@example.com',
-      registeredAt: new Date('2026-10-05T00:00:00.000Z'),
+  describe('queue days', () => {
+    const ID = '11111111-1111-4111-8111-111111111111';
+    const upcoming = () => ({
+      startsAt: new Date(inDays(3)),
+      endsAt: new Date(inDays(3, 4)),
     });
 
-    const result = await service.register(
-      '11111111-1111-4111-8111-111111111111',
-      { name: 'Asha Patil', mobile: '9876543210', email: 'asha@example.com' },
-      new Date('2026-10-05T00:00:00.000Z'),
-    );
+    it('opens every upcoming day of an event when it is published', async () => {
+      const dates = upcoming();
+      prismaMock.event.findUnique.mockResolvedValueOnce(
+        eventRow({ ...dates, status: EventStatus.DRAFT }),
+      );
+      prismaMock.event.update.mockResolvedValueOnce(
+        eventRow({ ...dates, status: EventStatus.PUBLISHED }),
+      );
 
-    expect(result.confirmationRef).toBe('QD-TEST12');
-  });
+      await service.publish(ID);
 
-  it('rejects registration before the window opens and after it closes', async () => {
-    prismaMock.event.findUnique.mockResolvedValue(eventRow());
+      const days = eventDayKeys(dates, todayKey());
+      expect(days.length).toBeGreaterThan(0);
+      expect(queueDaysMock.open.mock.calls.map((c) => c[0])).toEqual(days);
+    });
 
-    await expect(
-      service.register(
-        '11111111-1111-4111-8111-111111111111',
-        { name: 'Asha Patil', mobile: '9876543210', email: 'asha@example.com' },
-        new Date('2026-09-01T00:00:00.000Z'),
-      ),
-    ).rejects.toThrow('Registration has not opened yet');
+    it('does not open days that have already passed', async () => {
+      prismaMock.event.findUnique.mockResolvedValueOnce(
+        eventRow({ status: EventStatus.DRAFT }),
+      );
+      prismaMock.event.update.mockResolvedValueOnce(eventRow());
 
-    await expect(
-      service.register(
-        '11111111-1111-4111-8111-111111111111',
-        { name: 'Asha Patil', mobile: '9876543210', email: 'asha@example.com' },
-        new Date('2026-10-11T00:00:00.000Z'),
-      ),
-    ).rejects.toThrow('Registration is closed for this event');
-  });
+      await service.publish(ID);
 
-  it('hides registration for cancelled and unpublished events', async () => {
-    prismaMock.event.findUnique.mockResolvedValue(
-      eventRow({ status: EventStatus.CANCELLED }),
-    );
+      expect(queueDaysMock.open).not.toHaveBeenCalled();
+    });
 
-    await expect(
-      service.register(
-        '11111111-1111-4111-8111-111111111111',
-        { name: 'Asha Patil', mobile: '9876543210', email: 'asha@example.com' },
-        new Date('2026-10-05T00:00:00.000Z'),
-      ),
-    ).rejects.toBeInstanceOf(NotFoundException);
-  });
+    it('closes the days again when the event is unpublished', async () => {
+      const dates = upcoming();
+      prismaMock.event.findUnique.mockResolvedValueOnce(eventRow(dates));
+      prismaMock.event.update.mockResolvedValueOnce(
+        eventRow({ ...dates, status: EventStatus.DRAFT }),
+      );
+      prismaMock.event.findMany.mockResolvedValueOnce([]);
 
-  it('turns a duplicate mobile number into a conflict', async () => {
-    prismaMock.event.findUnique.mockResolvedValue(eventRow());
-    prismaMock.eventRegistration.create.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '5.19.0',
-        meta: { target: ['eventId', 'mobile'] },
-      }),
-    );
+      await service.unpublish(ID);
 
-    await expect(
-      service.register(
-        '11111111-1111-4111-8111-111111111111',
-        { name: 'Asha Patil', mobile: '9876543210', email: 'asha@example.com' },
-        new Date('2026-10-05T00:00:00.000Z'),
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
+      expect(queueDaysMock.close.mock.calls.map((c) => c[0])).toEqual(
+        eventDayKeys(dates, todayKey()),
+      );
+    });
+
+    it('keeps a day open while another published event still uses it', async () => {
+      const dates = upcoming();
+      prismaMock.event.findUnique.mockResolvedValueOnce(eventRow(dates));
+      prismaMock.event.update.mockResolvedValueOnce(
+        eventRow({ ...dates, status: EventStatus.CANCELLED }),
+      );
+      prismaMock.event.findMany.mockResolvedValueOnce([dates]);
+
+      await service.cancel(ID);
+
+      expect(queueDaysMock.close).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses to delete an event that already has registrations', async () => {
@@ -290,7 +251,7 @@ describe('EventsService', () => {
 
     await expect(
       service.remove('11111111-1111-4111-8111-111111111111'),
-    ).rejects.toThrow('Cancel it instead');
+    ).rejects.toThrow('Unpublish it instead');
     expect(prismaMock.event.delete).not.toHaveBeenCalled();
   });
 
@@ -352,9 +313,9 @@ describe('EventsService', () => {
     prismaMock.eventRegistration.findMany.mockResolvedValue([
       {
         id: 'reg-1',
-        name: 'Asha Patil',
-        mobile: '9876543210',
-        email: 'asha@example.com',
+        name: 'Tan Wei Ming',
+        mobile: '+6591234567',
+        email: 'weiming@example.com',
         status: RegistrationStatus.REGISTERED,
         confirmationRef: 'QD-TEST12',
         registeredAt: new Date('2026-10-05T00:00:00.000Z'),
@@ -366,7 +327,7 @@ describe('EventsService', () => {
     );
     expect(rows).toEqual([
       expect.objectContaining({
-        mobile: '9876543210',
+        mobile: '+6591234567',
         confirmationRef: 'QD-TEST12',
       }),
     ]);

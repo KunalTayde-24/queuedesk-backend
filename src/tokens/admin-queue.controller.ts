@@ -15,6 +15,7 @@ import {
 import { AdminGuard } from '../auth/admin.guard';
 import { isValidDateKey, todayKey } from '../common/dates';
 import { CreateWalkInDto } from './dto/create-token.dto';
+import { MoveTokensDto } from './dto/move-tokens.dto';
 import { QueueDaysService } from './queue-days.service';
 import { TokensService } from './tokens.service';
 
@@ -56,6 +57,13 @@ export class AdminQueueController {
   @HttpCode(HttpStatus.OK)
   close(@Param('date') date: string) {
     return this.queueDays.close(requireDateKey(date));
+  }
+
+  /** Moves the waiting tokens of one date to another open date (keeps their order). */
+  @Post('move')
+  @HttpCode(HttpStatus.OK)
+  move(@Body() dto: MoveTokensDto) {
+    return this.tokensService.moveWaiting(requireDateKey(dto.from), requireDateKey(dto.to));
   }
 
   @Post('tokens')

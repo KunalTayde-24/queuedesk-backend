@@ -1,12 +1,13 @@
 import { Matches } from 'class-validator';
+import { IsMobile } from '../../common/mobile';
 
 export class SendOtpDto {
-  @Matches(/^\d{10}$/, { message: 'mobile must be exactly 10 digits' })
+  @IsMobile()
   mobile!: string;
 }
 
 export class VerifyOtpDto {
-  @Matches(/^\d{10}$/, { message: 'mobile must be exactly 10 digits' })
+  @IsMobile()
   mobile!: string;
 
   @Matches(/^\d{4,8}$/, { message: 'Enter the digits from your code' })

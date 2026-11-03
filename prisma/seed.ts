@@ -36,7 +36,7 @@ async function main() {
       data: {
         title: sampleTitle,
         description:
-          'Join us for an evening of lights, music, and sweets. Bring your family, wear something festive, and register before the celebration begins.',
+          'Join us for an evening of lights, music, and sweets. Bring your family, wear something festive, and join the queue on the day.',
         venue: 'Main Hall',
         registrationOpensAt: opensAt,
         registrationClosesAt: startsAt,

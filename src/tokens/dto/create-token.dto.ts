@@ -1,4 +1,5 @@
 import { IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
+import { IsMobile } from '../../common/mobile';
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -9,7 +10,7 @@ export class CreateTokenDto {
   @MaxLength(80)
   name!: string;
 
-  @Matches(/^\d{10}$/, { message: 'mobile must be exactly 10 digits' })
+  @IsMobile()
   mobile!: string;
 
   @Matches(DATE_KEY, { message: 'date must look like 2026-10-24' })
@@ -26,7 +27,7 @@ export class CreateWalkInDto {
   @MaxLength(80)
   name!: string;
 
-  @Matches(/^\d{10}$/, { message: 'mobile must be exactly 10 digits' })
+  @IsMobile()
   mobile!: string;
 
   @IsOptional()

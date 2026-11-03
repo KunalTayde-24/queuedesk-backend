@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsDateString, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsDateString, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 function trimString(value: unknown): unknown {
   return typeof value === 'string' ? value.trim() : value;
@@ -12,23 +12,17 @@ export class CreateEventDto {
   @MaxLength(120)
   title!: string;
 
+  @IsOptional()
   @Transform(({ value }) => trimString(value))
   @IsString()
-  @MinLength(10)
   @MaxLength(4000)
-  description!: string;
+  description?: string;
 
+  @IsOptional()
   @Transform(({ value }) => trimString(value))
   @IsString()
-  @MinLength(2)
   @MaxLength(200)
-  venue!: string;
-
-  @IsDateString()
-  registrationOpensAt!: string;
-
-  @IsDateString()
-  registrationClosesAt!: string;
+  venue?: string;
 
   @IsDateString()
   startsAt!: string;

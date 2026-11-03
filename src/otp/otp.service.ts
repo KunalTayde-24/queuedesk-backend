@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
+import { toE164 } from '../common/mobile';
 import { PrismaService } from '../prisma/prisma.service';
 import { OTP_PROVIDER, OtpProvider } from './otp.provider';
 
@@ -27,11 +28,11 @@ export class OtpService {
     @Inject(OTP_PROVIDER) private readonly provider: OtpProvider,
   ) {
     this.ttlMs = Number(config.get<string>('OTP_TTL_SECONDS') ?? 300) * 1000;
-    this.countryCode = config.get<string>('DEFAULT_COUNTRY_CODE') ?? '+91';
+    this.countryCode = config.get<string>('DEFAULT_COUNTRY_CODE') ?? '+65';
   }
 
   private e164(mobile: string) {
-    return `${this.countryCode}${mobile}`;
+    return toE164(mobile, this.countryCode);
   }
 
   private tooMany(message: string) {

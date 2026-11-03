@@ -1,12 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
 
-// The queue runs on Indian time no matter where the server is hosted. Dates
+// The queue runs on Singapore time no matter where the server is hosted. Dates
 // are passed around as plain "YYYY-MM-DD" keys and stored in @db.Date columns
 // as UTC midnight, so the stored day never shifts with the server's timezone.
-const QUEUE_TIME_ZONE = 'Asia/Kolkata';
+const QUEUE_TIME_ZONE = 'Asia/Singapore';
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Today's date in India, e.g. "2026-10-17". */
+/** Today's date in Singapore, e.g. "2026-10-17". */
 export function todayKey(now: Date = new Date()): string {
   // The en-CA locale formats dates as YYYY-MM-DD.
   return new Intl.DateTimeFormat('en-CA', {
@@ -15,6 +15,11 @@ export function todayKey(now: Date = new Date()): string {
     month: '2-digit',
     day: '2-digit',
   }).format(now);
+}
+
+/** The Singapore calendar day ("YYYY-MM-DD") that a moment falls on. */
+export function dayKeyOf(date: Date): string {
+  return todayKey(date);
 }
 
 export function isValidDateKey(key: unknown): key is string {

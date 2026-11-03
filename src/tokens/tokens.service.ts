@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Token, TokenStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -87,6 +88,73 @@ export class TokensService {
       mobile: dto.mobile,
     });
     return toView(token, true);
+  }
+
+  /** One token by id for its holder's phone: no phone number, so the id alone reveals little. */
+  async findPublic(id: string): Promise<TokenView> {
+    const token = await this.prisma.token.findUnique({ where: { id } });
+    if (!token) throw new NotFoundException('Token not found');
+    return toView(token, false);
+  }
+
+  /**
+   * Moves the people still waiting on one date to another open date, keeping their
+   * order and giving them the next numbers there. Called or finished tokens stay
+   * where they are. A person who already holds a live token on the new date is skipped.
+   */
+  async moveWaiting(fromKey: string, toKey: string): Promise<{ moved: number; skipped: number }> {
+    if (fromKey === toKey) {
+      throw new BadRequestException('Pick a different date to move the tokens to.');
+    }
+    if (toKey < todayKey()) {
+      throw new BadRequestException('You cannot move tokens to a date that has already passed.');
+    }
+    if (!(await this.queueDays.isOpen(toKey))) {
+      throw new BadRequestException('The new date is not open for the queue yet.');
+    }
+    const from = dateFromKey(fromKey);
+    const to = dateFromKey(toKey);
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const waiting = await tx.token.findMany({
+              where: { date: from, status: TokenStatus.WAITING },
+              orderBy: { tokenNumber: 'asc' },
+            });
+            if (waiting.length === 0) return { moved: 0, skipped: 0 };
+
+            const live = await tx.token.findMany({
+              where: { date: to, status: { not: TokenStatus.DONE } },
+              select: { mobile: true },
+            });
+            const taken = new Set(live.map((t) => t.mobile));
+            const top = await tx.token.aggregate({ where: { date: to }, _max: { tokenNumber: true } });
+            let next = (top._max.tokenNumber ?? 0) + 1;
+
+            let moved = 0;
+            let skipped = 0;
+            for (const token of waiting) {
+              if (taken.has(token.mobile)) {
+                skipped++;
+                continue;
+              }
+              await tx.token.update({ where: { id: token.id }, data: { date: to, tokenNumber: next++ } });
+              taken.add(token.mobile);
+              moved++;
+            }
+            return { moved, skipped };
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (err) {
+        const retryable =
+          err instanceof Prisma.PrismaClientKnownRequestError && (err.code === 'P2002' || err.code === 'P2034');
+        if (!retryable || attempt === MAX_RETRIES - 1) throw err;
+      }
+    }
+    return { moved: 0, skipped: 0 };
   }
 
   async listForDate(key: string, includeMobile: boolean): Promise<TokenView[]> {

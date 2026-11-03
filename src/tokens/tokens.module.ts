@@ -10,6 +10,6 @@ import { TokensService } from './tokens.service';
   imports: [OtpModule, AuthModule],
   controllers: [TokensController, AdminQueueController],
   providers: [TokensService, QueueDaysService],
-  exports: [TokensService],
+  exports: [TokensService, QueueDaysService],
 })
 export class TokensModule {}

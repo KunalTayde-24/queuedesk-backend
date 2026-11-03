@@ -1,21 +1,14 @@
 import { BadRequestException } from '@nestjs/common';
-import { EventStatus } from '@prisma/client';
 
-export const APP_TIME_ZONE = 'Asia/Kolkata';
-const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
-
-export type RegistrationState = 'OPENS_SOON' | 'OPEN' | 'CLOSED';
+export const APP_TIME_ZONE = 'Asia/Singapore';
+const SGT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 export interface EventWindowsInput {
-  registrationOpensAt: string;
-  registrationClosesAt: string;
   startsAt: string;
   endsAt: string;
 }
 
 export interface EventWindows {
-  registrationOpensAt: Date;
-  registrationClosesAt: Date;
   startsAt: Date;
   endsAt: Date;
 }
@@ -57,7 +50,7 @@ export function parseEventInstant(
     ) {
       throw new BadRequestException(`${label} is not a valid date`);
     }
-    date = new Date(probe.getTime() - IST_OFFSET_MS);
+    date = new Date(probe.getTime() - SGT_OFFSET_MS);
   }
 
   if (Number.isNaN(date.getTime())) {
@@ -69,14 +62,6 @@ export function parseEventInstant(
 
 export function parseWindows(input: EventWindowsInput): EventWindows {
   const windows: EventWindows = {
-    registrationOpensAt: parseEventInstant(
-      input.registrationOpensAt,
-      'Registration open',
-    ),
-    registrationClosesAt: parseEventInstant(
-      input.registrationClosesAt,
-      'Registration close',
-    ),
     startsAt: parseEventInstant(input.startsAt, 'Event start'),
     endsAt: parseEventInstant(input.endsAt, 'Event end'),
   };
@@ -87,32 +72,22 @@ export function parseWindows(input: EventWindowsInput): EventWindows {
 const MAX_YEARS_AHEAD = 3;
 
 const FIELD_LABEL: Record<keyof EventWindows, string> = {
-  registrationOpensAt: 'Registration open',
-  registrationClosesAt: 'Registration close',
   startsAt: 'Event start',
   endsAt: 'Event end',
 };
 
 const PAST_MESSAGE: Partial<Record<keyof EventWindows, string>> = {
-  registrationClosesAt: 'Registration cannot close in the past',
   startsAt: 'The event cannot start in the past',
   endsAt: 'The event cannot end in the past',
 };
 
-export const ALL_WINDOW_FIELDS: (keyof EventWindows)[] = [
-  'registrationOpensAt',
-  'registrationClosesAt',
-  'startsAt',
-  'endsAt',
-];
+export const ALL_WINDOW_FIELDS: (keyof EventWindows)[] = ['startsAt', 'endsAt'];
 
 /**
  * Checks only the dates that are new or were changed (so an old event can
- * still have its description edited): registration close, event start and
- * event end cannot be in the past, and no date may be more than 3 years away
- * (almost always a typo in the year). Registration may open in the past,
- * which just means "open now". Compared to the minute, so choosing the
- * current minute is fine.
+ * still have its description edited): event start and event end cannot be in
+ * the past, and no date may be more than 3 years away (almost always a typo
+ * in the year). Compared to the minute, so choosing the current minute is fine.
  */
 export function assertDatesSensible(
   windows: EventWindows,
@@ -138,43 +113,7 @@ export function assertDatesSensible(
 }
 
 export function assertWindowOrder(windows: EventWindows): void {
-  if (!(windows.registrationOpensAt < windows.registrationClosesAt)) {
-    throw new BadRequestException(
-      'Registration close must be after registration open',
-    );
-  }
-  if (windows.registrationClosesAt > windows.startsAt) {
-    throw new BadRequestException(
-      'Registration must close at or before the event starts',
-    );
-  }
   if (!(windows.startsAt < windows.endsAt)) {
     throw new BadRequestException('Event end must be after the event starts');
   }
-}
-
-export function deriveRegistration(
-  event: {
-    status: EventStatus;
-    registrationOpensAt: Date;
-    registrationClosesAt: Date;
-  },
-  now: Date,
-): { registrationState: RegistrationState; canRegister: boolean } {
-  if (event.status === EventStatus.CANCELLED) {
-    return { registrationState: 'CLOSED', canRegister: false };
-  }
-
-  let registrationState: RegistrationState = 'CLOSED';
-  if (now < event.registrationOpensAt) {
-    registrationState = 'OPENS_SOON';
-  } else if (now <= event.registrationClosesAt) {
-    registrationState = 'OPEN';
-  }
-
-  return {
-    registrationState,
-    canRegister:
-      event.status === EventStatus.PUBLISHED && registrationState === 'OPEN',
-  };
 }
