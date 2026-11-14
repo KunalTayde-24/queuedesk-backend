@@ -29,6 +29,7 @@ export class QueueDaysService {
     const events = await this.prisma.event.findMany({
       where: {
         status: EventStatus.PUBLISHED,
+        needsQueue: true,
         endsAt: { gte: dateFromKey(addDaysToKey(fromKey, -1)) },
       },
       select: { id: true, title: true, startsAt: true, endsAt: true },

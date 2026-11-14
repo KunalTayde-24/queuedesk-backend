@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -93,6 +94,7 @@ export class EventsService {
         title: dto.title,
         description: dto.description ?? '',
         venue: dto.venue ?? '',
+        needsQueue: dto.needsQueue ?? true,
         ...windows,
         // Registration is no longer offered; these columns are kept (not null) with harmless values.
         registrationOpensAt: now,
@@ -126,9 +128,15 @@ export class EventsService {
       title: dto.title,
       description: dto.description,
       venue: dto.venue,
+      needsQueue: dto.needsQueue,
       ...windows,
       registrationClosesAt: windows.startsAt,
     };
+
+    // A published event cannot be moved onto another published event's time (only checked when its dates change).
+    if (current.status === EventStatus.PUBLISHED && changed.length > 0) {
+      await this.assertNoOverlap({ id, ...windows });
+    }
 
     if (file) {
       Object.assign(data, imageData(await processEventImage(file)));
@@ -160,6 +168,7 @@ export class EventsService {
       startsAt: current.startsAt.toISOString(),
       endsAt: current.endsAt.toISOString(),
     });
+    await this.assertNoOverlap(current);
     const event = await this.prisma.event.update({
       where: { id },
       data: { status: EventStatus.PUBLISHED },
@@ -241,9 +250,41 @@ export class EventsService {
   }
 
   /** Opens every upcoming queue day the event covers. */
-  private async openDays(event: { startsAt: Date; endsAt: Date }) {
+  private async openDays(event: { startsAt: Date; endsAt: Date; needsQueue: boolean }) {
+    // Events that do not need a queue never open one.
+    if (!event.needsQueue) return;
     for (const key of eventDayKeys(event, todayKey())) {
       await this.queueDays.open(key);
+    }
+  }
+
+  /**
+   * Two published events cannot overlap in time: throws if another published
+   * event runs at any moment between this event's start and end. Back-to-back
+   * events (one ends exactly when the next starts) are fine.
+   */
+  private async assertNoOverlap(event: { id: string; startsAt: Date; endsAt: Date }) {
+    const clash = await this.prisma.event.findFirst({
+      where: {
+        status: EventStatus.PUBLISHED,
+        id: { not: event.id },
+        startsAt: { lt: event.endsAt },
+        endsAt: { gt: event.startsAt },
+      },
+      select: { title: true, startsAt: true, endsAt: true },
+    });
+    if (clash) {
+      const when = (d: Date) =>
+        new Intl.DateTimeFormat('en-SG', {
+          timeZone: 'Asia/Singapore',
+          day: 'numeric',
+          month: 'short',
+          hour: 'numeric',
+          minute: '2-digit',
+        }).format(d);
+      throw new ConflictException(
+        `This overlaps the published event "${clash.title}" (${when(clash.startsAt)} to ${when(clash.endsAt)} SGT). Change the time, or unpublish that event first.`,
+      );
     }
   }
 
@@ -253,13 +294,15 @@ export class EventsService {
    * already issued are never touched (closing only stops new ones).
    */
   private async releaseDays(
-    before: { id: string; startsAt: Date; endsAt: Date },
-    after?: { startsAt: Date; endsAt: Date },
+    before: { id: string; startsAt: Date; endsAt: Date; needsQueue: boolean },
+    after?: { startsAt: Date; endsAt: Date; needsQueue: boolean },
   ) {
+    // An event without a queue never opened any days, so there is nothing to close.
+    if (!before.needsQueue) return;
     const today = todayKey();
-    const keep = new Set(after ? eventDayKeys(after, today) : []);
+    const keep = new Set(after?.needsQueue ? eventDayKeys(after, today) : []);
     const others = await this.prisma.event.findMany({
-      where: { status: EventStatus.PUBLISHED, id: { not: before.id } },
+      where: { status: EventStatus.PUBLISHED, needsQueue: true, id: { not: before.id } },
       select: { startsAt: true, endsAt: true },
     });
     for (const other of others) {

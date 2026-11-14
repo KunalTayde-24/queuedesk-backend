@@ -89,6 +89,7 @@ model Event {
   registrationClosesAt DateTime
   startsAt             DateTime
   endsAt               DateTime
+  needsQueue           Boolean             @default(true)
   status               EventStatus         @default(DRAFT)
   createdByAdminId     String?
   createdBy            Admin?              @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)

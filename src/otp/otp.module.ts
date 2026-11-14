@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DevOtpProvider } from './dev-otp.provider';
+import { EightByEightOtpProvider } from './eight-by-eight-otp.provider';
+import { EightByEightWhatsAppOtpProvider } from './eight-by-eight-whatsapp-otp.provider';
 import { OtpController } from './otp.controller';
 import { OTP_PROVIDER } from './otp.provider';
 import { OtpService } from './otp.service';
@@ -22,6 +24,10 @@ import { WhatsAppOtpProvider } from './whatsapp-otp.provider';
             return new TwilioVerifyOtpProvider(config);
           case 'twilio-whatsapp':
             return new WhatsAppOtpProvider(config);
+          case '8x8-sms':
+            return new EightByEightOtpProvider(config);
+          case '8x8-whatsapp':
+            return new EightByEightWhatsAppOtpProvider(config);
           default:
             return new DevOtpProvider(config);
         }

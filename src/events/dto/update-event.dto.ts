@@ -41,6 +41,13 @@ export class UpdateEventDto {
   endsAt?: string;
 
   @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined ? undefined : value === true || value === 'true' || value === 'on',
+  )
+  @IsBoolean()
+  needsQueue?: boolean;
+
+  @IsOptional()
   @Transform(
     ({ value }) => value === true || value === 'true' || value === 'on',
   )

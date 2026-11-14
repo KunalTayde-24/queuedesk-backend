@@ -8,6 +8,7 @@ export const eventSelect = {
   imageMime: true,
   startsAt: true,
   endsAt: true,
+  needsQueue: true,
   status: true,
   createdAt: true,
   updatedAt: true,
@@ -27,6 +28,7 @@ export interface EventDto {
   imageUrl: string | null;
   startsAt: string;
   endsAt: string;
+  needsQueue: boolean;
   status: EventStatus;
   createdAt: string;
   updatedAt: string;
@@ -42,6 +44,7 @@ export function toEventDto(event: EventRecord): EventDto {
     imageUrl: event.imageMime ? `/events/${event.id}/image` : null,
     startsAt: event.startsAt.toISOString(),
     endsAt: event.endsAt.toISOString(),
+    needsQueue: event.needsQueue,
     status: event.status,
     createdAt: event.createdAt.toISOString(),
     updatedAt: event.updatedAt.toISOString(),

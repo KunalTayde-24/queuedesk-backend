@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventStatus, RegistrationStatus } from '@prisma/client';
@@ -26,6 +26,7 @@ function eventRow(overrides: Record<string, unknown> = {}) {
     imageMime: null,
     startsAt: new Date('2026-10-10T12:00:00.000Z'),
     endsAt: new Date('2026-10-10T16:00:00.000Z'),
+    needsQueue: true,
     status: EventStatus.PUBLISHED,
     createdAt: new Date('2026-09-01T00:00:00.000Z'),
     updatedAt: new Date('2026-09-02T00:00:00.000Z'),
@@ -54,6 +55,7 @@ describe('EventsService', () => {
   const prismaMock: any = {
     event: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
@@ -67,6 +69,9 @@ describe('EventsService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // Default: nothing overlaps (clearAllMocks keeps queued once-values, so reset).
+    prismaMock.event.findFirst.mockReset();
+    prismaMock.event.findFirst.mockResolvedValue(null);
     const moduleRef: TestingModule = await Test.createTestingModule({
       providers: [
         EventsService,
@@ -202,6 +207,63 @@ describe('EventsService', () => {
       const days = eventDayKeys(dates, todayKey());
       expect(days.length).toBeGreaterThan(0);
       expect(queueDaysMock.open.mock.calls.map((c) => c[0])).toEqual(days);
+    });
+
+    it('does not open a queue for an event that does not need one', async () => {
+      const dates = upcoming();
+      prismaMock.event.findUnique.mockResolvedValueOnce(
+        eventRow({ ...dates, needsQueue: false, status: EventStatus.DRAFT }),
+      );
+      prismaMock.event.update.mockResolvedValueOnce(
+        eventRow({ ...dates, needsQueue: false, status: EventStatus.PUBLISHED }),
+      );
+
+      await service.publish(ID);
+
+      expect(queueDaysMock.open).not.toHaveBeenCalled();
+    });
+
+    it('does not close anything when an event without a queue is unpublished', async () => {
+      const dates = upcoming();
+      prismaMock.event.findUnique.mockResolvedValueOnce(eventRow({ ...dates, needsQueue: false }));
+      prismaMock.event.update.mockResolvedValueOnce(
+        eventRow({ ...dates, needsQueue: false, status: EventStatus.DRAFT }),
+      );
+
+      await service.unpublish(ID);
+
+      expect(queueDaysMock.close).not.toHaveBeenCalled();
+    });
+
+    it('refuses to publish an event that overlaps a published one', async () => {
+      const dates = upcoming();
+      prismaMock.event.findUnique.mockResolvedValueOnce(
+        eventRow({ ...dates, status: EventStatus.DRAFT }),
+      );
+      prismaMock.event.findFirst.mockResolvedValueOnce({ title: 'Other event', ...dates });
+
+      await expect(service.publish(ID)).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.event.update).not.toHaveBeenCalled();
+      expect(queueDaysMock.open).not.toHaveBeenCalled();
+    });
+
+    it('checks overlap by time: other published events that start before this ends and end after it starts', async () => {
+      const dates = upcoming();
+      prismaMock.event.findUnique.mockResolvedValueOnce(
+        eventRow({ ...dates, status: EventStatus.DRAFT }),
+      );
+      prismaMock.event.update.mockResolvedValueOnce(
+        eventRow({ ...dates, status: EventStatus.PUBLISHED }),
+      );
+
+      await service.publish(ID);
+
+      expect(prismaMock.event.findFirst.mock.calls[0][0].where).toEqual({
+        status: EventStatus.PUBLISHED,
+        id: { not: ID },
+        startsAt: { lt: dates.endsAt },
+        endsAt: { gt: dates.startsAt },
+      });
     });
 
     it('does not open days that have already passed', async () => {
