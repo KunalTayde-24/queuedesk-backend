@@ -3,6 +3,8 @@ export interface WhatsAppSender {
     mobile: string,
     tokenNumber: number,
     name: string,
+    /** The event whose queue the token is in (empty for old tokens without one). */
+    eventTitle?: string,
   ): Promise<void>;
 }
 

@@ -3,7 +3,7 @@ import { IsMobile } from '../../common/mobile';
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
-/** A visitor getting a token: needs the date they picked and a verified phone number. */
+/** A visitor getting a token: the event and date they picked, and a verified phone number. */
 export class CreateTokenDto {
   @IsString()
   @IsNotEmpty()
@@ -12,6 +12,9 @@ export class CreateTokenDto {
 
   @IsMobile()
   mobile!: string;
+
+  @IsUUID('all', { message: 'Pick the event you want a token for' })
+  eventId!: string;
 
   @Matches(DATE_KEY, { message: 'date must look like 2026-10-24' })
   date!: string;
@@ -29,6 +32,9 @@ export class CreateWalkInDto {
 
   @IsMobile()
   mobile!: string;
+
+  @IsUUID('all', { message: 'Pick the event you want a token for' })
+  eventId!: string;
 
   @IsOptional()
   @Matches(DATE_KEY, { message: 'date must look like 2026-10-24' })

@@ -67,14 +67,12 @@ describe('QueueActionsService (e2e-style, mocked Prisma)', () => {
     expect(result.token.status).toBe(TokenStatus.CALLED);
     expect(result.warning).toBeUndefined();
     expect(stub.sent).toEqual([
-      { mobile: '+6591234567', tokenNumber: 1, name: 'Test User' },
+      { mobile: '+6591234567', tokenNumber: 1, name: 'Test User', eventTitle: '' },
     ]);
   });
 
-  it('un-calls any other currently CALLED token for the same day', async () => {
+  it('never changes another token when one is called, and stamps calledAt', async () => {
     prismaMock.token.findUnique.mockResolvedValue(baseToken);
-    prismaMock.token.findUniqueOrThrow.mockResolvedValue(baseToken);
-    prismaMock.token.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.token.update.mockResolvedValue({
       ...baseToken,
       status: TokenStatus.CALLED,
@@ -82,15 +80,27 @@ describe('QueueActionsService (e2e-style, mocked Prisma)', () => {
 
     await service.call('token-1');
 
-    expect(prismaMock.token.updateMany).toHaveBeenCalledWith(
+    expect(prismaMock.token.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.token.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          status: TokenStatus.CALLED,
-          NOT: { id: 'token-1' },
-        }),
-        data: { status: TokenStatus.WAITING },
+        where: { id: 'token-1' },
+        data: { status: TokenStatus.CALLED, calledAt: expect.any(Date) },
       }),
     );
+  });
+
+  it('recall refreshes calledAt and sends the message again', async () => {
+    const called = { ...baseToken, status: TokenStatus.CALLED };
+    prismaMock.token.findUnique.mockResolvedValue(called);
+    prismaMock.token.update.mockResolvedValue({ ...called, calledAt: new Date() });
+
+    const result = await service.recall('token-1');
+
+    expect(result.success).toBe(true);
+    expect(prismaMock.token.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'token-1' }, data: { calledAt: expect.any(Date) } }),
+    );
+    expect(stub.sent).toHaveLength(1);
   });
 
   it('still reports success with a warning when the WhatsApp send fails', async () => {

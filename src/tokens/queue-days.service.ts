@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { EventStatus } from '@prisma/client';
 import { eventDayKeys } from '../events/events.days';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,122 +12,155 @@ import {
 // How far back the admin calendar looks for days that still have tokens.
 const ADMIN_LOOKBACK_DAYS = 60;
 
-/** Which dates the admin has opened for visitors to take tokens. */
+/**
+ * Which events' queues are open for visitors, and on which dates. One row = one
+ * event's queue on one date; every event numbers its own queue.
+ */
 @Injectable()
 export class QueueDaysService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async isOpen(key: string): Promise<boolean> {
+  /** Is this event's queue open on that date? */
+  async isOpen(eventId: string, key: string): Promise<boolean> {
     const day = await this.prisma.queueDay.findUnique({
-      where: { date: dateFromKey(key) },
+      where: { date_eventId: { date: dateFromKey(key), eventId } },
     });
     return day !== null;
   }
 
-  /** Published events by the day they cover, from `fromKey` on (so dates can show their event). */
-  private async eventsByDay(fromKey: string) {
-    const events = await this.prisma.event.findMany({
-      where: {
-        status: EventStatus.PUBLISHED,
-        needsQueue: true,
-        endsAt: { gte: dateFromKey(addDaysToKey(fromKey, -1)) },
-      },
-      select: { id: true, title: true, startsAt: true, endsAt: true },
-      orderBy: { startsAt: 'asc' },
-    });
-    const byDay = new Map<string, { id: string; title: string }[]>();
-    for (const event of events) {
-      for (const key of eventDayKeys(event, fromKey)) {
-        const list = byDay.get(key) ?? [];
-        list.push({ id: event.id, title: event.title });
-        byDay.set(key, list);
-      }
-    }
-    return byDay;
-  }
-
-  /** What visitors may pick: today and later dates that are open. */
+  /** What visitors may pick: open queues from today on, one entry per event and date. */
   async listOpenForVisitors() {
     const today = todayKey();
-    const [days, byDay] = await Promise.all([
-      this.prisma.queueDay.findMany({
-        where: { date: { gte: dateFromKey(today) } },
-        orderBy: { date: 'asc' },
-      }),
-      this.eventsByDay(today),
-    ]);
-    const dates = days.map((d) => keyFromDate(d.date));
+    const days = await this.prisma.queueDay.findMany({
+      where: {
+        date: { gte: dateFromKey(today) },
+        event: { is: { status: EventStatus.PUBLISHED, needsQueue: true } },
+      },
+      select: {
+        date: true,
+        event: { select: { id: true, title: true, startsAt: true, endsAt: true } },
+      },
+      orderBy: [{ date: 'asc' }, { event: { startsAt: 'asc' } }],
+    });
     return {
       today,
-      dates,
-      events: dates.flatMap((date) =>
-        (byDay.get(date) ?? []).map((e) => ({ date, id: e.id, title: e.title })),
+      queues: days.flatMap((d) =>
+        d.event
+          ? [
+              {
+                eventId: d.event.id,
+                title: d.event.title,
+                date: keyFromDate(d.date),
+                startsAt: d.event.startsAt.toISOString(),
+                endsAt: d.event.endsAt.toISOString(),
+              },
+            ]
+          : [],
       ),
     };
   }
 
-  /** Every open date plus any recent date that has tokens, with token counts. */
+  /** Every open queue plus any recent queue that has tokens, with token counts. */
   async listForAdmin() {
     const today = todayKey();
     const from = dateFromKey(addDaysToKey(today, -ADMIN_LOOKBACK_DAYS));
 
-    const [open, counts, byDay] = await Promise.all([
-      this.prisma.queueDay.findMany({ where: { date: { gte: from } } }),
+    const [open, counts] = await Promise.all([
+      this.prisma.queueDay.findMany({
+        where: { date: { gte: from } },
+        select: { date: true, eventId: true },
+      }),
       this.prisma.token.groupBy({
-        by: ['date'],
+        by: ['date', 'eventId'],
         where: { date: { gte: from } },
         _count: { _all: true },
       }),
-      this.eventsByDay(addDaysToKey(today, -ADMIN_LOOKBACK_DAYS)),
     ]);
 
-    const byKey = new Map<
-      string,
-      {
-        date: string;
-        open: boolean;
-        tokenCount: number;
-        events: { id: string; title: string }[];
+    const eventIds = [
+      ...new Set([...open.map((d) => d.eventId), ...counts.map((c) => c.eventId)]),
+    ].filter((id): id is string => id !== null);
+    const titles = new Map(
+      (
+        await this.prisma.event.findMany({
+          where: { id: { in: eventIds } },
+          select: { id: true, title: true },
+        })
+      ).map((e) => [e.id, e.title]),
+    );
+
+    type Entry = {
+      date: string;
+      eventId: string | null;
+      eventTitle: string | null;
+      open: boolean;
+      tokenCount: number;
+    };
+    const entryKey = (date: string, eventId: string | null) => `${date}|${eventId ?? ''}`;
+    const byKey = new Map<string, Entry>();
+    const entryFor = (date: string, eventId: string | null): Entry => {
+      const key = entryKey(date, eventId);
+      let entry = byKey.get(key);
+      if (!entry) {
+        entry = {
+          date,
+          eventId,
+          eventTitle: eventId ? (titles.get(eventId) ?? null) : null,
+          open: false,
+          tokenCount: 0,
+        };
+        byKey.set(key, entry);
       }
-    >();
-    for (const d of open) {
-      byKey.set(keyFromDate(d.date), {
-        date: keyFromDate(d.date),
-        open: true,
-        tokenCount: 0,
-        events: byDay.get(keyFromDate(d.date)) ?? [],
-      });
-    }
+      return entry;
+    };
+
+    for (const d of open) entryFor(keyFromDate(d.date), d.eventId).open = true;
     for (const c of counts) {
-      const key = keyFromDate(c.date);
-      const entry = byKey.get(key) ?? {
-        date: key,
-        open: false,
-        tokenCount: 0,
-        events: byDay.get(key) ?? [],
-      };
-      entry.tokenCount = c._count._all;
-      byKey.set(key, entry);
+      entryFor(keyFromDate(c.date), c.eventId).tokenCount = c._count._all;
     }
 
     return {
       today,
-      days: [...byKey.values()].sort((a, b) => a.date.localeCompare(b.date)),
+      days: [...byKey.values()].sort(
+        (a, b) =>
+          a.date.localeCompare(b.date) ||
+          (a.eventTitle ?? '').localeCompare(b.eventTitle ?? ''),
+      ),
     };
   }
 
-  async open(key: string) {
+  /** Opens an event's queue on one of the event's own dates. */
+  async open(eventId: string, key: string) {
     if (key < todayKey()) {
       throw new BadRequestException('You cannot open a date that has already passed.');
     }
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      select: { status: true, needsQueue: true, startsAt: true, endsAt: true },
+    });
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.status !== EventStatus.PUBLISHED || !event.needsQueue) {
+      throw new BadRequestException(
+        'Only a published event that needs a queue can open its queue.',
+      );
+    }
+    if (!eventDayKeys(event).includes(key)) {
+      throw new BadRequestException('That date is not one of this event’s days.');
+    }
     const date = dateFromKey(key);
-    await this.prisma.queueDay.upsert({ where: { date }, update: {}, create: { date } });
-    return { date: key, open: true };
+    await this.prisma.queueDay.upsert({
+      where: { date_eventId: { date, eventId } },
+      update: {},
+      create: { date, eventId },
+    });
+    return { date: key, eventId, open: true };
   }
 
-  async close(key: string) {
+  async close(eventId: string, key: string) {
     // Tokens already issued for the date are kept; closing only stops new ones.
-    await this.prisma.queueDay.deleteMany({ where: { date: dateFromKey(key) } });
-    return { date: key, open: false };
+    await this.prisma.queueDay.deleteMany({
+      where: { date: dateFromKey(key), eventId },
+    });
+    return { date: key, eventId, open: false };
   }
 }

@@ -25,15 +25,19 @@ export class TokensController {
   }
 
   /**
-   * One date's queue, without phone numbers: lets a visitor holding a token for a
-   * later date see when it is called. `dateFromKey` rejects a malformed date.
+   * One date's queues (every event, or just `eventId`), without names or phone numbers: lets a
+   * visitor holding a token for a later date see when it is called. `dateFromKey` rejects a
+   * malformed date.
    */
   @Get('queue')
-  findByDate(@Query('date') date: string) {
-    return this.tokensService.listForDate(keyFromDate(dateFromKey(date ?? '')), false);
+  findByDate(
+    @Query('date') date: string,
+    @Query('eventId', new ParseUUIDPipe({ optional: true })) eventId?: string,
+  ) {
+    return this.tokensService.listForDate(keyFromDate(dateFromKey(date ?? '')), false, eventId);
   }
 
-  /** The dates visitors can pick from. */
+  /** The queues visitors can pick from: one entry per event and date. */
   @Get('dates')
   openDates() {
     return this.queueDays.listOpenForVisitors();

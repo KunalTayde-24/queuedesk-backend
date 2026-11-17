@@ -21,22 +21,35 @@ model Token {
   name        String
   mobile      String
   status      TokenStatus @default(WAITING)
+  // When staff last called this token; "now serving" is the most recently called one.
+  calledAt    DateTime?
+  // The event whose queue this token is in. Null only for tokens taken before queues belonged
+  // to events; every new token has one.
+  eventId     String?
+  event       Event?      @relation(fields: [eventId], references: [id], onDelete: SetNull)
   createdAt   DateTime    @default(now())
 
-  // Concurrency backstop for daily numbering: two requests racing to compute
-  // the same "next" number will have one insert fail on this constraint,
+  // Concurrency backstop for numbering: each event numbers its own queue per date. Two requests
+  // racing to compute the same "next" number will have one insert fail on this constraint,
   // which the service layer catches and retries against.
-  @@unique([date, tokenNumber])
+  @@unique([eventId, date, tokenNumber])
+  @@index([eventId, date, status])
   @@index([date, status])
   @@map("tokens")
 }
 
 // Dates the admin has opened for visitors to take tokens. A date with no row
 // here is closed: visitors cannot pick it.
+/// One row = one event's queue is open for visitors on one date.
 model QueueDay {
-  date      DateTime @id @db.Date
+  id        String   @id @default(uuid())
+  date      DateTime @db.Date
+  // Null only for days opened before queues belonged to events (history).
+  eventId   String?
+  event     Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 
+  @@unique([date, eventId])
   @@map("queue_days")
 }
 
@@ -94,6 +107,8 @@ model Event {
   createdByAdminId     String?
   createdBy            Admin?              @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
   registrations        EventRegistration[]
+  tokens               Token[]
+  queueDays            QueueDay[]
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
 

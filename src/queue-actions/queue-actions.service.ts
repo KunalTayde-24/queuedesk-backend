@@ -5,13 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Token, TokenStatus } from '@prisma/client';
+import { TokenWithEvent, withEvent } from '../tokens/tokens.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WHATSAPP_SENDER } from '../whatsapp/whatsapp.constants';
 import { WhatsAppSender } from '../whatsapp/whatsapp-sender.interface';
 
 export interface QueueActionResult {
   success: true;
-  token: Token;
+  token: TokenWithEvent;
   warning?: string;
 }
 
@@ -22,20 +23,21 @@ export class QueueActionsService {
     @Inject(WHATSAPP_SENDER) private readonly whatsapp: WhatsAppSender,
   ) {}
 
-  private async findOrThrow(id: string): Promise<Token> {
-    const token = await this.prisma.token.findUnique({ where: { id } });
+  private async findOrThrow(id: string): Promise<TokenWithEvent> {
+    const token = await this.prisma.token.findUnique({ where: { id }, include: withEvent });
     if (!token) {
       throw new NotFoundException('Token not found');
     }
     return token;
   }
 
-  private async notify(token: Token): Promise<string | undefined> {
+  private async notify(token: TokenWithEvent): Promise<string | undefined> {
     try {
       await this.whatsapp.sendTokenCalledMessage(
         token.mobile,
         token.tokenNumber,
         token.name,
+        token.event?.title ?? '',
       );
       return undefined;
     } catch (err) {
@@ -48,22 +50,12 @@ export class QueueActionsService {
   async call(id: string): Promise<QueueActionResult> {
     await this.findOrThrow(id);
 
-    const token = await this.prisma.$transaction(async (tx) => {
-      const target = await tx.token.findUniqueOrThrow({ where: { id } });
-
-      await tx.token.updateMany({
-        where: {
-          date: target.date,
-          status: TokenStatus.CALLED,
-          NOT: { id: target.id },
-        },
-        data: { status: TokenStatus.WAITING },
-      });
-
-      return tx.token.update({
-        where: { id },
-        data: { status: TokenStatus.CALLED },
-      });
+    // Calling a token never changes anyone else's status: several tokens can be
+    // CALLED at once, and the most recently called one is "now serving".
+    const token = await this.prisma.token.update({
+      where: { id },
+      data: { status: TokenStatus.CALLED, calledAt: new Date() },
+      include: withEvent,
     });
 
     const warning = await this.notify(token);
@@ -77,15 +69,20 @@ export class QueueActionsService {
       throw new BadRequestException('Token is not currently called');
     }
 
-    const warning = await this.notify(token);
-    return { success: true, token, ...(warning ? { warning } : {}) };
+    const recalled = await this.prisma.token.update({
+      where: { id },
+      data: { calledAt: new Date() },
+      include: withEvent,
+    });
+    const warning = await this.notify(recalled);
+    return { success: true, token: recalled, ...(warning ? { warning } : {}) };
   }
 
   async skip(id: string): Promise<QueueActionResult> {
     await this.findOrThrow(id);
     const token = await this.prisma.token.update({
       where: { id },
-      data: { status: TokenStatus.WAITING },
+      data: { status: TokenStatus.WAITING, calledAt: null },
     });
     return { success: true, token };
   }

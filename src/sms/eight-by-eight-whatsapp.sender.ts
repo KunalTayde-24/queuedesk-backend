@@ -17,6 +17,7 @@ export class EightByEightWhatsAppSender implements WhatsAppSender {
   private readonly countryCode: string;
   private readonly template: string;
   private readonly language: string;
+  private readonly includeEvent: boolean;
 
   constructor(config: ConfigService) {
     this.client = new EightByEightWhatsAppClient(config);
@@ -26,12 +27,15 @@ export class EightByEightWhatsAppSender implements WhatsAppSender {
       config.get<string>('EIGHTX8_WA_TOKEN_LANGUAGE') ||
       config.get<string>('EIGHTX8_WA_LANGUAGE') ||
       'en_US';
+    // Set when the approved template has a second variable, {{2}} = the event name.
+    this.includeEvent = config.get<string>('EIGHTX8_WA_TOKEN_INCLUDE_EVENT') === 'true';
   }
 
   async sendTokenCalledMessage(
     mobile: string,
     tokenNumber: number,
     _name: string,
+    eventTitle = '',
   ): Promise<void> {
     try {
       await this.client.sendTemplate(
@@ -41,7 +45,12 @@ export class EightByEightWhatsAppSender implements WhatsAppSender {
         [
           {
             type: 'body',
-            parameters: [{ type: 'text', text: String(tokenNumber) }],
+            parameters: [
+              { type: 'text', text: String(tokenNumber) },
+              ...(this.includeEvent
+                ? [{ type: 'text', text: eventTitle || 'the event' }]
+                : []),
+            ],
           },
         ],
       );

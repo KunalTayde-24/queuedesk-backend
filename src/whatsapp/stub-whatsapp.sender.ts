@@ -5,6 +5,7 @@ interface SentMessage {
   mobile: string;
   tokenNumber: number;
   name: string;
+  eventTitle: string;
 }
 
 /**
@@ -19,7 +20,8 @@ export class StubWhatsAppSender implements WhatsAppSender {
     mobile: string,
     tokenNumber: number,
     name: string,
+    eventTitle = '',
   ): Promise<void> {
-    this.sent.push({ mobile, tokenNumber, name });
+    this.sent.push({ mobile, tokenNumber, name, eventTitle });
   }
 }

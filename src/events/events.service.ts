@@ -211,6 +211,11 @@ export class EventsService {
         'This event already has registrations, so it cannot be deleted. Unpublish it instead so those records stay available.',
       );
     }
+    if ((await this.prisma.token.count({ where: { eventId: id } })) > 0) {
+      throw new BadRequestException(
+        'This event already has queue tokens, so it cannot be deleted. Unpublish it instead so the queue records stay available.',
+      );
+    }
     await this.prisma.event.delete({ where: { id } });
     await this.releaseDays(current);
     return { success: true };
@@ -250,11 +255,11 @@ export class EventsService {
   }
 
   /** Opens every upcoming queue day the event covers. */
-  private async openDays(event: { startsAt: Date; endsAt: Date; needsQueue: boolean }) {
+  private async openDays(event: { id: string; startsAt: Date; endsAt: Date; needsQueue: boolean }) {
     // Events that do not need a queue never open one.
     if (!event.needsQueue) return;
     for (const key of eventDayKeys(event, todayKey())) {
-      await this.queueDays.open(key);
+      await this.queueDays.open(event.id, key);
     }
   }
 
@@ -299,17 +304,11 @@ export class EventsService {
   ) {
     // An event without a queue never opened any days, so there is nothing to close.
     if (!before.needsQueue) return;
+    // Queues belong to their event, so only this event's own days are closed.
     const today = todayKey();
     const keep = new Set(after?.needsQueue ? eventDayKeys(after, today) : []);
-    const others = await this.prisma.event.findMany({
-      where: { status: EventStatus.PUBLISHED, needsQueue: true, id: { not: before.id } },
-      select: { startsAt: true, endsAt: true },
-    });
-    for (const other of others) {
-      for (const key of eventDayKeys(other, today)) keep.add(key);
-    }
     for (const key of eventDayKeys(before, today)) {
-      if (!keep.has(key)) await this.queueDays.close(key);
+      if (!keep.has(key)) await this.queueDays.close(before.id, key);
     }
   }
 

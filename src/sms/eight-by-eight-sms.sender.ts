@@ -27,13 +27,15 @@ export class EightByEightSmsSender implements WhatsAppSender {
     mobile: string,
     tokenNumber: number,
     name: string,
+    eventTitle = '',
   ): Promise<void> {
     try {
       await this.client.send(
         toE164(mobile, this.countryCode),
         this.messageText
           .replace(/\{name\}/g, name)
-          .replace(/\{token\}/g, String(tokenNumber)),
+          .replace(/\{token\}/g, String(tokenNumber))
+          .replace(/\{event\}/g, eventTitle),
       );
     } catch (err) {
       throw new WhatsAppSendError(

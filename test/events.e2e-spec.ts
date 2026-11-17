@@ -65,6 +65,7 @@ describe('EventsService', () => {
       create: jest.fn(),
       findMany: jest.fn(),
     },
+    token: { count: jest.fn() },
   };
 
   beforeEach(async () => {
@@ -72,6 +73,8 @@ describe('EventsService', () => {
     // Default: nothing overlaps (clearAllMocks keeps queued once-values, so reset).
     prismaMock.event.findFirst.mockReset();
     prismaMock.event.findFirst.mockResolvedValue(null);
+    prismaMock.token.count.mockReset();
+    prismaMock.token.count.mockResolvedValue(0);
     const moduleRef: TestingModule = await Test.createTestingModule({
       providers: [
         EventsService,
@@ -206,7 +209,8 @@ describe('EventsService', () => {
 
       const days = eventDayKeys(dates, todayKey());
       expect(days.length).toBeGreaterThan(0);
-      expect(queueDaysMock.open.mock.calls.map((c) => c[0])).toEqual(days);
+      // Each queue day belongs to this event.
+      expect(queueDaysMock.open.mock.calls).toEqual(days.map((day) => [ID, day]));
     });
 
     it('does not open a queue for an event that does not need one', async () => {
@@ -283,26 +287,26 @@ describe('EventsService', () => {
       prismaMock.event.update.mockResolvedValueOnce(
         eventRow({ ...dates, status: EventStatus.DRAFT }),
       );
-      prismaMock.event.findMany.mockResolvedValueOnce([]);
 
       await service.unpublish(ID);
 
-      expect(queueDaysMock.close.mock.calls.map((c) => c[0])).toEqual(
-        eventDayKeys(dates, todayKey()),
+      expect(queueDaysMock.close.mock.calls).toEqual(
+        eventDayKeys(dates, todayKey()).map((day) => [ID, day]),
       );
     });
 
-    it('keeps a day open while another published event still uses it', async () => {
+    it('closes only this event\u2019s own queue when it is cancelled', async () => {
       const dates = upcoming();
       prismaMock.event.findUnique.mockResolvedValueOnce(eventRow(dates));
       prismaMock.event.update.mockResolvedValueOnce(
         eventRow({ ...dates, status: EventStatus.CANCELLED }),
       );
-      prismaMock.event.findMany.mockResolvedValueOnce([dates]);
 
       await service.cancel(ID);
 
-      expect(queueDaysMock.close).not.toHaveBeenCalled();
+      // Queues belong to events, so another event on the same day is never touched.
+      expect(queueDaysMock.close.mock.calls.every((call) => call[0] === ID)).toBe(true);
+      expect(queueDaysMock.close).toHaveBeenCalled();
     });
   });
 
@@ -314,6 +318,16 @@ describe('EventsService', () => {
     await expect(
       service.remove('11111111-1111-4111-8111-111111111111'),
     ).rejects.toThrow('Unpublish it instead');
+    expect(prismaMock.event.delete).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete an event that already has queue tokens', async () => {
+    prismaMock.event.findUnique.mockResolvedValue(eventRow({ _count: { registrations: 0 } }));
+    prismaMock.token.count.mockResolvedValue(3);
+
+    await expect(
+      service.remove('11111111-1111-4111-8111-111111111111'),
+    ).rejects.toThrow('queue tokens');
     expect(prismaMock.event.delete).not.toHaveBeenCalled();
   });
 

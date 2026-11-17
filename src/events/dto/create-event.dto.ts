@@ -8,7 +8,7 @@ function trimString(value: unknown): unknown {
 export class CreateEventDto {
   @Transform(({ value }) => trimString(value))
   @IsString()
-  @MinLength(3)
+  @MinLength(1)
   @MaxLength(120)
   title!: string;
 

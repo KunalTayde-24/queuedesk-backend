@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Post,
   Put,
   Query,
@@ -27,7 +28,7 @@ function requireDateKey(value: string | undefined, fallback?: string): string {
   return key;
 }
 
-/** Staff-only: view any date's queue, choose which dates are open, add walk-ins. */
+/** Staff-only: view any date's queues, choose which event queues are open, add walk-ins. */
 @Controller('admin/queue')
 @UseGuards(AdminGuard)
 export class AdminQueueController {
@@ -36,10 +37,13 @@ export class AdminQueueController {
     private readonly queueDays: QueueDaysService,
   ) {}
 
-  /** Full queue (with phone numbers) for one date; defaults to today. */
+  /** Full queues (with names and phone numbers) for one date, all events or just `eventId`; defaults to today. */
   @Get()
-  list(@Query('date') date?: string) {
-    return this.tokensService.listForDate(requireDateKey(date, todayKey()), true);
+  list(
+    @Query('date') date?: string,
+    @Query('eventId', new ParseUUIDPipe({ optional: true })) eventId?: string,
+  ) {
+    return this.tokensService.listForDate(requireDateKey(date, todayKey()), true, eventId);
   }
 
   @Get('days')
@@ -49,21 +53,23 @@ export class AdminQueueController {
 
   @Put('days/:date')
   @HttpCode(HttpStatus.OK)
-  open(@Param('date') date: string) {
-    return this.queueDays.open(requireDateKey(date));
+  open(@Param('date') date: string, @Query('eventId', new ParseUUIDPipe()) eventId: string) {
+    return this.queueDays.open(eventId, requireDateKey(date));
   }
 
   @Delete('days/:date')
   @HttpCode(HttpStatus.OK)
-  close(@Param('date') date: string) {
-    return this.queueDays.close(requireDateKey(date));
+  close(@Param('date') date: string, @Query('eventId', new ParseUUIDPipe()) eventId: string) {
+    return this.queueDays.close(eventId, requireDateKey(date));
   }
 
-  /** Moves the waiting tokens of one date to another open date (keeps their order). */
+  /** Moves the waiting tokens of one event's date to another open queue (keeps their order). */
   @Post('move')
   @HttpCode(HttpStatus.OK)
   move(@Body() dto: MoveTokensDto) {
-    return this.tokensService.moveWaiting(requireDateKey(dto.from), requireDateKey(dto.to));
+    requireDateKey(dto.from);
+    requireDateKey(dto.to);
+    return this.tokensService.moveWaiting(dto);
   }
 
   @Post('tokens')
