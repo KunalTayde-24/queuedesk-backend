@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { AdminGuard } from '../auth/admin.guard';
+import { Roles } from '../auth/roles';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { UploadedImage } from './events.image';
@@ -31,10 +32,13 @@ interface AdminRequest {
 
 @Controller('admin/events')
 @UseGuards(AdminGuard)
+@Roles('ADMIN')
 export class EventsAdminController {
   constructor(private readonly eventsService: EventsService) {}
 
+  // The queue page needs the event list to show each event's queue; it is read-only.
   @Get()
+  @Roles('ADMIN', 'QUEUE')
   list() {
     return this.eventsService.listAdmin();
   }

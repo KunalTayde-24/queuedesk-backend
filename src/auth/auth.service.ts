@@ -27,8 +27,9 @@ export class AuthService {
     const accessToken = this.jwtService.sign({
       sub: admin.id,
       email: admin.email,
+      role: admin.role,
     });
 
-    return { accessToken, expiresIn: 3600 };
+    return { accessToken, expiresIn: 3600, role: admin.role };
   }
 }
